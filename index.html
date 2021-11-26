@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>webgl-my-icon-generator</title>
+    <style>
+      img {
+        display: block;
+        border: 1px solid #ccc;
+      }
+      canvas {
+        display: none;
+        width: 256px;
+        height: 256px;
+      }
+      button {
+        margin-bottom: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="js-generate-button">generate</button>
+    <canvas id="js-canvas" width="1024" height="1024"></canvas>
+    <img id="js-thumbnail" src="" width="256" height="256" alt="" />
+    <script>
+      const loadImg = (src) => {
+        return new Promise(resolve => {
+          const img = new Image();
+          img.onload = () => {
+            resolve(img);
+          }
+          img.src = src;
+        });
+      }
+
+      const thumbnailElement = document.getElementById('js-thumbnail');
+      const buttonElement = document.getElementById('js-generate-button');
+      const canvasElement = document.getElementById("js-canvas");
+
+      const gl = canvasElement.getContext("webgl2");
+
+      const vertexShaderText = `#version 300 es
+        layout(location = 0) in vec3 aPosition;
+        layout(location = 1) in vec2 aUv;
+
+        out vec2 vUv;
+
+        void main() {
+          vUv = aUv;
+          gl_Position = vec4(aPosition, 1.);
+        }
+      `;
+      const fragmentShaderText = `#version 300 es
+        precision mediump float;
+        uniform sampler2D uTexture;
+        uniform vec3 uComplementaryColor;
+        uniform float uComplementaryValue;
+        in vec2 vUv;
+        out vec4 outColor;
+        void main() {
+          vec4 textureColor = texture(uTexture, vUv);
+          vec3 color = uComplementaryColor;
+          if(textureColor.r < 0.5) {
+            color = vec3(
+              uComplementaryValue - color.x,
+              uComplementaryValue - color.y,
+              uComplementaryValue - color.z
+            );
+          }
+          outColor = vec4(color, 1);
+        }
+      `;
+
+      const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+      gl.shaderSource(vertexShader, vertexShaderText);
+      gl.compileShader(vertexShader);
+      const vertexShaderInfo = gl.getShaderInfoLog(vertexShader);
+      if(vertexShaderInfo.length > 0) {
+        throw vertexShaderInfo;
+      }
+
+      const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(fragmentShader, fragmentShaderText);
+      gl.compileShader(fragmentShader);
+      const fragmentShaderInfo = gl.getShaderInfoLog(fragmentShader);
+      if(fragmentShaderInfo.length > 0) {
+        throw fragmentShaderInfo;
+      }
+
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      const programInfo = gl.getProgramInfoLog(program);
+      if(programInfo.length > 0) {
+        throw programInfo;
+      }
+
+      // 0 --- 1
+      // | .  /|
+      // | ./  |
+      // | /   |
+      // 2 --- 3
+
+      const positions = [
+        -1, 1, 0,
+         1, 1, 0,
+        -1, -1, 0,
+         1, -1, 0,
+      ];
+      const uvs = [
+        0, 0,
+        1, 0,
+        0, 1,
+        1, 1,
+      ];
+      const indices = [0, 2, 1, 1, 2, 3];
+
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+
+      const positionVbo = gl.createBuffer();
+      const positionVboLocation = 0;
+      const positionVboStride = 3;
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionVbo);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(positionVboLocation);
+      gl.vertexAttribPointer(positionVboLocation, positionVboStride, gl.FLOAT, false, 0, 0);
+
+      const uvVbo = gl.createBuffer();
+      const uvVboLocation = 1;
+      const uvVboStride = 2;
+      gl.bindBuffer(gl.ARRAY_BUFFER, uvVbo);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(uvVboLocation);
+      gl.vertexAttribPointer(uvVboLocation, uvVboStride, gl.FLOAT, false, 0, 0);
+
+      const ibo = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Int16Array(indices), gl.STATIC_DRAW);
+
+      gl.useProgram(program);
+
+      const generate = () => {
+        const complementaryColor = [
+          Math.floor(Math.random() * 255.99) / 255,
+          Math.floor(Math.random() * 255.99) / 255,
+          Math.floor(Math.random() * 255.99) / 255
+        ];
+        const maxValue = Math.max(...complementaryColor);
+        const minValue = Math.min(...complementaryColor);
+        const complementaryValue = maxValue + minValue;
+
+        const complementaryColorUniform = gl.getUniformLocation(program, "uComplementaryColor");
+        gl.uniform3fv(complementaryColorUniform, complementaryColor);
+
+        const complementaryValueUniform = gl.getUniformLocation(program, "uComplementaryValue");
+        gl.uniform1f(complementaryValueUniform, complementaryValue);
+
+        gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+
+        const base64 = canvasElement.toDataURL();
+        thumbnailElement.src = base64;
+      }
+
+      const load = async () => {
+        const img = await loadImg("./profile-icon.png");
+
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+
+        const textureUniform = gl.getUniformLocation(program, "uTexture");
+        const activeTextureIndex = 0;
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.uniform1i(textureUniform, activeTextureIndex);
+
+        generate();
+
+        buttonElement.addEventListener('click', () => generate());
+      }
+
+      load();
+    </script>
+  </body>
+</html>
